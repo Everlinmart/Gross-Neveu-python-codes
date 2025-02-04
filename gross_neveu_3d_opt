@@ -1,0 +1,110 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from mpmath import polylog
+from scipy.optimize import minimize
+import pandas as pd
+
+# Function to prevent overflow and underflow in exponential
+def safe_exp(x):
+    return np.exp(np.clip(x, -700, 700))
+
+# Function definitions
+def Xp(eta, mu, T):
+    eta, mu, T = np.asarray(eta).item(), np.asarray(mu).item(), np.asarray(T).item()
+    return (eta**3) / (6 * np.pi) + (eta / (2 * np.pi)) * T**2 * (
+        float(polylog(2, -safe_exp(-(eta - mu) / T))) + 
+        float(polylog(2, -safe_exp(-(eta + mu) / T)))
+    ) + (T**3 / (2 * np.pi)) * (
+        float(polylog(3, -safe_exp(-(eta - mu) / T))) + 
+        float(polylog(3, -safe_exp(-(eta + mu) / T)))
+    )
+
+def Yp(eta, mu, T):
+    eta, mu, T = np.asarray(eta).item(), np.asarray(mu).item(), np.asarray(T).item()
+    return -(T / (4 * np.pi)) * ((eta / T) + np.log1p(safe_exp(-(eta - mu) / T)) + np.log1p(safe_exp(-(eta + mu) / T)))
+
+def Wp(eta, mu, T):
+    eta, mu, T = np.asarray(eta).item(), np.asarray(mu).item(), np.asarray(T).item()
+    return -(T**2 / (4 * np.pi)) * (
+        (eta / T) * np.log((1 + safe_exp((eta + mu) / T)) / (1 + safe_exp((eta - mu) / T))) + 
+        float(polylog(2, -safe_exp((eta + mu) / T))) - 
+        float(polylog(2, -safe_exp((eta - mu) / T)))
+    )
+
+def VeffGN(mu, sig, eta, delta, lamb, n, T):
+    return (delta * sig**2) / (2 * lamb) + 2 * Xp(eta, mu, T) + \
+           4 * delta * eta * (eta - sig) * Yp(eta, mu, T) + \
+           2 * (delta * lamb / n) * eta**2 * (Yp(eta, mu, T))**2 + \
+           2 * (delta * lamb / n) * (Wp(eta, mu, T))**2
+
+def sigbar(mu, eta, lamb, T):
+    return 4 * lamb * eta * Yp(eta, mu, T)
+
+def etabar(mu, lamb, n, T):
+    res = minimize(lambda eta: VeffGN(mu, sigbar(mu, eta, lamb, T), eta, 1, lamb, n, T), x0=np.array([0.1]), tol=1e-8)
+    return float(res.x[0]) if res.success else None
+
+def InteractionEnergy(mu, eta, lamb, T):
+    return -4 * eta * Yp(eta, mu, T)
+
+# Compute Interaction Energy as a function of Temperature (T/Λ)
+temp_values = np.arange(1/1000, 2, 1/200)
+results_temp = []
+
+for temp in temp_values:
+    eta_value = etabar(0, -np.pi, 1, temp)
+    if eta_value is not None:
+        results_temp.append([temp, InteractionEnergy(0, abs(eta_value), -np.pi, temp)])
+
+# Create DataFrame and save results for T/Λ
+df_temp = pd.DataFrame(results_temp, columns=["T/Λ", "⟨ψ̅ψ⟩/NΛ²"])
+df_temp.to_csv("interaction_energy_vs_temp.csv", index=False)
+print("Table saved as interaction_energy_vs_temp.csv")
+
+# Compute Interaction Energy as a function of μ
+mu_values = np.arange(0, 2, 1/100)
+results_mu = []
+
+for mu in mu_values:
+    eta_value = etabar(mu, -np.pi, 1, 1/1000)  # Fixed T = 1/1000
+    print(f"mu={mu}, eta_value={eta_value}")  # Debugging print
+    if eta_value is not None:
+        results_mu.append([mu, InteractionEnergy(mu, abs(eta_value), -np.pi, 1/1000)])
+
+# If no values were computed, print a warning
+if not results_mu:
+    print("⚠ Warning: No valid values for eta_bar were found for any mu. Check etabar function!")
+
+# Create DataFrame and save results for μ
+df_mu = pd.DataFrame(results_mu, columns=["μ", "⟨ψ̅ψ⟩/NΛ²"])
+df_mu.to_csv("interaction_energy_vs_mu.csv", index=False)
+print("Table saved as interaction_energy_vs_mu.csv")
+
+# Enable interactive mode to show multiple windows
+plt.ion()
+
+# Create plot for Interaction Energy vs Temperature
+fig1 = plt.figure(figsize=(8, 6))
+plt.plot(df_temp["T/Λ"], df_temp["⟨ψ̅ψ⟩/NΛ²"], linestyle='-', linewidth=2)
+plt.xlabel(r"$T/\Lambda$")
+plt.ylabel(r"$\langle \bar{\psi} \psi \rangle / N \Lambda^2$")
+plt.title("Chiral Condensate vs Temperature")
+plt.grid(True)
+plt.show(block=False)  # Keep window open without blocking the next plot
+
+# If df_mu is empty, don't attempt to plot
+if not df_mu.empty:
+    # Create plot for Interaction Energy vs μ
+    fig2 = plt.figure(figsize=(8, 6))
+    plt.plot(df_mu["μ"], df_mu["⟨ψ̅ψ⟩/NΛ²"], linestyle='-', linewidth=2)
+    plt.xlabel(r"$\mu$")
+    plt.ylabel(r"$\langle \bar{\psi} \psi \rangle / N \Lambda^2$")
+    plt.title("Chiral Condensate vs Chemical Potential")
+    plt.grid(True)
+    plt.show(block=False)  # Keep window open without blocking
+
+# Wait for user input before closing
+input("Press Enter to close plots...")
+plt.close(fig1)
+if not df_mu.empty:
+    plt.close(fig2)
